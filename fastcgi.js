@@ -5,6 +5,7 @@ var FCGI_RESPONDER = 1;
 
 var FCGI_BEGIN_REQUEST = 1;
 var FCGI_PARAMS = 4;
+var FCGI_STDIN = 5;
 
 var fastcgi = (function () {    
     function Singleton() {
@@ -62,7 +63,18 @@ var fastcgi = (function () {
 			buf.write(value,index,valueLength);
 			return this.addHeader(FCGI_PARAMS,requestId,buf);
 		}
-		this.fcgiStdin(requestId,data){}
+		this.fcgiStdin = function(requestId,data){			
+			var length = data.length;
+			var index = 0;
+			while(true){
+				var copyLength = (length-index>65535)?65535:(length-index);
+				var buf = new Buffer(copyLength);
+				data.copy(buf,0,index);				
+				index += copyLength;
+				this.addHeader(FCGI_STDIN,requestId,buf);
+				if(index>=length) break;
+			}
+		}
     }
 	return new Singleton();           
 })();
