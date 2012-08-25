@@ -36,9 +36,11 @@ module.exports = (function () {
 		}
 		client.prototype.send = function (type,requestId,content){
 			//if(type==FCGI_BEGIN_REQUEST) console.log(content);
+			console.log(content);
 			var contentLenth = content.length;
 			if(content.length%8!=0) var paddingLength = 8 - content.length%8;
 			else var paddingLength = 0;
+			console.log("contentLenth="+contentLenth+"|paddingLength="+paddingLength);
 			var length = contentLenth + paddingLength + 8;//总长度
 			var buf = new Buffer(length);
 			var offset = 0;
@@ -48,15 +50,14 @@ module.exports = (function () {
 			offset+=2;
 			buf.writeInt16BE(contentLenth,offset);
 			offset+=2;
-			buf.writeInt16BE(paddingLength,offset);
-			offset+=2;
-			console.log("offset="+offset);
-			buf.fill(0,offset);//reserved
+			buf.writeInt8(paddingLength,offset++);
+			buf.fill(0,offset,offset++);//reserved
 			content.copy(buf,offset);
 			offset+=contentLenth;
 			if(offset<length) buf.fill(0,offset,length);
 			console.log(buf);
-			this._client.write(buf);
+			var ret = this._client.write(buf);
+			console.log("send ret="+ret);
 		}
 		client.prototype.beginRequest = function(requestId,flag){
 			if(flag==null) flag = 0;
@@ -66,37 +67,62 @@ module.exports = (function () {
 			offset+=2;
 			buf.writeInt8(flag,offset++);
 			buf.fill(0,offset,8);
+			console.log('beginRequest');
 			this.send(FCGI_BEGIN_REQUEST,requestId,buf);
 		}
-		client.prototype.fcgiParams = function(requestId,name,value){
-			console.log("fcgiParams name="+name+"|value="+value);
-			var nameLength = name.length;
-			var valueLength = value.length;
+		client.prototype.fcgiParams = function(requestId,fcgiparams){
 			var length = 0;
-			if(nameLength<=127) length+=1;
-			else length+=4;
-			if(valueLength<=127) length+=1;
-			else length+=4;
-			length += nameLength;
-			length += valueLength;
-			var buf = new Buffer(length);
+			for(var name in fcgiparams){
+				var nameLength = name.length;
+				var valueLength = fcgiparams[name].length;
+				if(nameLength<=127) length+=1;
+				else length+=4;
+				if(valueLength<=127) length+=1;
+				else length+=4;
+				length += nameLength;
+				length += valueLength;
+			}
+			//length += 4;
+			var data = new Buffer(length);
 			var offset = 0;
-			if(nameLength<=127) buf.writeInt8(nameLength,offset);
-			else{
-				var nameLength_e = nameLength & 2147483647;
-				buf.writeInt32BE(nameLength_e,offset);
-				offset+=4;
+			for(var name in fcgiparams){
+				var nameLength = name.length;
+				var valueLength = fcgiparams[name].length;
+				if(nameLength<=127) data.writeInt8(nameLength,offset++);
+				else{
+					var nameLength_e = nameLength | 2147483648;
+					if(name == 'HTTP_COOKIE'){
+						console.log('nameLength_e=');
+						console.log(nameLength_e);
+					}
+					data.writeInt32BE(nameLength_e,offset);
+					offset+=4;
+				}
+				if(valueLength<=127) data.writeInt8(valueLength,offset++);
+				else{
+					valueLength_e = valueLength | 2147483648;
+					if(name == 'HTTP_COOKIE'){
+						console.log('valueLength_e='+valueLength_e+"|valueLength="+valueLength);
+					}
+					data.writeInt32BE(valueLength_e,offset);
+					offset+=4;
+				}
+				data.write(name,offset,nameLength);
+				offset+=nameLength;
+				data.write(fcgiparams[name],offset,valueLength);
+				offset+=valueLength;
+			}	
+			//data.fill(0,offset,length);
+			var offset = 0;
+			while(true){
+				var copyLength = (length-offset>65535)?65535:(length-offset);
+				var buf = new Buffer(copyLength);
+				data.copy(buf,0,offset);				
+				offset += copyLength;
+				this.send(FCGI_PARAMS,requestId,buf);
+				if(offset>=length) break;
 			}
-			if(valueLength<=127) buf.writeInt8(valueLength,offset);
-			else{
-				valueLength_e = valueLength & 2147483647;
-				buf.writeInt32BE(valueLength_e,offset);
-				offset+=4;
-			}
-			buf.write(name,offset,nameLength);
-			offset+=nameLength;
-			buf.write(value,offset,valueLength);
-			this.send(FCGI_PARAMS,requestId,buf);
+			this.endfcgiParams(requestId);
 		}
 		client.prototype.endfcgiParams = function(requestId){
 			var buf = new Buffer(0);
@@ -120,10 +146,8 @@ module.exports = (function () {
 		client.prototype.request = function(fcgiparams,stdin){
 			var requestId = this.getRequestId();
 			this.beginRequest(requestId);
-			for(var name in fcgiparams){
-				this.fcgiParams(requestId,name,fcgiparams[name]);
-			}
-			this.endfcgiParams(requestId);
+			this.fcgiParams(requestId,fcgiparams);
+			//this.fcgiStdin(requestId,new Buffer(0));
 		}
 		client.prototype.getRequestId = function(){
 			var requestId;
@@ -136,7 +160,7 @@ module.exports = (function () {
 		}
 		client.prototype.responseHandle = function(data){
 			console.log("data");
-			console.log(data);
+			console.log(data.toString('utf8'));
 		}
 			
     }
